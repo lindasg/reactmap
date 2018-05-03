@@ -4,6 +4,8 @@ import noImage from './images/no-image-available.png';
 import museumIcon from './images/museum-marker.png';
 import spinner from './images/circles-loader.svg';
 import PropTypes from 'prop-types';
+import { getFSLocations, getFSDetails } from './foursquare';
+import fsButton from './images/foursquare-button.png';
 
 class ListView extends Component {
 
@@ -24,86 +26,105 @@ class ListView extends Component {
   }
 
   componentDidMount () {
-     const service = new window.google.maps.places.PlacesService(this.props.map);
-     const request = {
-       location: this.props.mapCenter,
-       radius: '1000',
-       type: ['museum']
-     }
-
-     service.nearbySearch(request, (results, status) => {
-       if (status === window.google.maps.places.PlacesServiceStatus.OK) {
-         this.setState({
-           allPlaces: results,
-           filteredPlaces: results,
-           apiReturned: true
-         });
-         if(results) this.addMarkers(this.state.allPlaces);
-
-       } else {
-         this.setState({
-           allPlaces: [],
-           filterPlaces: [],
-           apiReturned: true
-         });
-       }
-
-     })
+    getFSLocations(this.props.mapCenter)
+        .then( places => {
+          this.setState({
+            allPlaces: places,
+            filteredPlaces: places,
+            apiReturned: true
+          });
+          if(places) this.addMarkers(places)
+        })
+        .catch(error => this.setState({apiReturned: true}));
 
   }
+
 
   addMarkers = (places) => {
 
     const { map, bounds, infowindow, toggleList } = this.props;
     const self = this;
 
-    places.forEach( (place, index) =>  {
+    places.forEach( (place) =>  {
 
       const position = {
-        lat: place.geometry.location.lat(),
-        lng: place.geometry.location.lng()
+              lat: place.location.lat,
+              lng: place.location.lng
       }
 
       place.marker = new window.google.maps.Marker({
         position,
         map,
         title: place.name,
-        id: place.place_id,
+        id: place.id,
         icon: museumIcon
       });
 
       bounds.extend(position);
 
-      const service = new window.google.maps.places.PlacesService(map);
-      service.getDetails({placeId: place.place_id}, function(pl, status) {
+      place.marker.addListener('click', function() {
+        const marker = this;
 
-        if (status === window.google.maps.places.PlacesServiceStatus.OK) {
-          place.marker.addListener('click', function() {
-            const marker = this;
-            marker.setAnimation(window.google.maps.Animation.BOUNCE);
-            setTimeout(function() {
-              marker.setAnimation(null);
-            }, 2100);
+        // bounce marker three times then stop
+        marker.setAnimation(window.google.maps.Animation.BOUNCE);
+        setTimeout(function() {
+          marker.setAnimation(null);
+        }, 2100);
 
-            marker.infoContent = `<div class="place">
-                                    <img class="place-photo" src="${pl.icon}" alt="${pl.name}">
-                                    <div class="place-meta">
-                                      <h2 class="place-title">${pl.name}</h2>
-                                      <p class="place-data">${pl.types[0]}</p>
-                                      <p class="place-contact">${pl.formatted_address}</p>
-                                      <a class="place-phone" href="${pl.international_phone_number}">Tel: ${pl.international_phone_number}</a>
-                                    </div>
+        // get venue details and display in infowindow
+        getFSDetails(marker.id)
+        .then(data => {
+          const pl = data.response.venue;
+          // set up fallbacks in case data is incomplete
+
+          const { canonicalUrl, bestPhoto, contact, location, categories, attributes, tips } = pl; // destructuring
+
+          marker.url = canonicalUrl ? canonicalUrl : 'https://foursquare.com/';
+          marker.photo = bestPhoto ? `${bestPhoto.prefix}width100${bestPhoto.suffix}` // ES6 template literals
+                    : noImage;
+          marker.address = location.formattedAddress;
+          marker.category = categories.length > 0 ? categories[0].name : '';
+          marker.tip = tips.count > 0 ? `"${tips.groups[0].items[0].text}"` : 'No tips available';
+
+          // build infowindonw content
+          marker.infoContent = `<div class="place">
+                                  <img class="place-photo" src=${marker.photo} alt="${marker.title}">
+                                  <div class="place-meta">
+                                    <h2 class="place-title">${marker.title}</h2>
+                                    <p class="place-data">${marker.category}</p>
+                                    <p class="place-contact">${marker.address}</p>
                                   </div>
-                                  <a class="place-link" href="${pl.website}" target="_blank">
-                                    <span>Read more</span>
-                                  </a>`
-            infowindow.setContent(marker.infoContent);
-            infowindow.open(map, marker);
+                                </div>
+                                <p class="place-tip">${marker.tip}</p>
+                                <a class="place-link" href="${marker.url}" target="_blank">
+                                  <span>Read more</span>
+                                  <img class="fs-link" src="${fsButton}">
+                                </a>`
 
-          })
+          // set content and open window after content has returned
+          infowindow.setContent(marker.infoContent);
+          infowindow.open(map, marker);
 
-        }
-      })
+          // close list view in mobile if open so infowindow is not hidden by list
+          if (self.props.listOpen) {
+            toggleList()
+          };
+        })
+        .catch(error =>  {
+          marker.infoContent = `<div class="venue-error"  role="alert">
+                  <h3>Foursquare Venue Details request for ${marker.title} failed</h3>
+                  <p>Try again later...</p>
+                </div>`
+          // set content and open window
+          infowindow.setContent(marker.infoContent);
+          infowindow.open(map, marker);
+
+          // close list view in mobile if open so infowindow is not hidden by list
+          if (self.props.listOpen) {
+            toggleList()
+          };
+        });
+      });
 
     });
 
@@ -132,15 +153,10 @@ class ListView extends Component {
     })
 
     // sort array before updating state
-    filteredPlaces.sort(this.sortName);
 
     this.setState({filteredPlaces: filteredPlaces })
   }
 
-  showInfo = (place) => {
-    // force marker click
-    window.google.maps.event.trigger(place.marker,'click');
-  }
 
   render() {
 
@@ -148,7 +164,7 @@ class ListView extends Component {
     const { listOpen } = this.props;
     // API request fails
     if(apiReturned && !filteredPlaces) {
-      return <div> API request failed. Please try again later.</div>
+      return <div> Foursquare API request failed. Please try again later.</div>
 
    // API request returns successfully
     } else if( apiReturned && filteredPlaces ){

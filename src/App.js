@@ -2,6 +2,7 @@ import React, { Component } from 'react';
 import scriptLoader from 'react-async-script-loader';
 import ListView from './ListView';
 import spinner from './images/circles-loader.svg';
+import foursquare from './images/foursquare.png';
 
 class App extends Component {
 
@@ -103,6 +104,7 @@ class App extends Component {
             />
             : <p>We are experiencing loading issues. Please check your internet connection</p>
           }
+          <img src={foursquare} alt="Powered by Foursquare" className="fs-logo"/>
         </section>
         <section id="map" className="map" role="application">
           { mapError ?
